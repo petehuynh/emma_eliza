@@ -11,6 +11,9 @@ packages/plugin-buttplug/intiface-engine
 
 node-compile-cache
 
+# Ignore all files in the emma_docs directory
+emma_docs/*
+
 .idea
 .vscode
 .zed

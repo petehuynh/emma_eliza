@@ -52,6 +52,7 @@ import { zgPlugin } from "@elizaos/plugin-0g";
 import { footballPlugin } from "@elizaos/plugin-football";
 
 import { bootstrapPlugin } from "@elizaos/plugin-bootstrap";
+import { relationshipPlugin } from "@elizaos/plugin-relationship";
 import { normalizeCharacter } from "@elizaos/plugin-di";
 import createGoatPlugin from "@elizaos/plugin-goat";
 import createZilliqaPlugin from "@elizaos/plugin-zilliqa";
@@ -1032,6 +1033,7 @@ export async function createAgent(
                 ? elizaCodeinPlugin
                 : null,
             bootstrapPlugin,
+            relationshipPlugin,
             getSecret(character, "CDP_API_KEY_NAME") &&
             getSecret(character, "CDP_API_KEY_PRIVATE_KEY") &&
             getSecret(character, "CDP_AGENT_KIT_NETWORK")

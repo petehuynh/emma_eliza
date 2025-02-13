@@ -5,7 +5,9 @@ import { userEvalAction } from "./actions/userEval.ts";
 import { responseModeAction } from "./actions/responseMode.ts";
 import { endAction } from "./actions/end.ts";
 import { goalEvaluator } from "./evaluators/goal.ts";
+import { feelingEvaluator } from "./evaluators/feeling.ts";
 import { timeProvider } from "./providers/time.ts";
+import { relationshipProvider } from "./providers/relationship.ts";
 
 export * as actions from "./actions/index.ts";
 export * as evaluators from "./evaluators/index.ts";

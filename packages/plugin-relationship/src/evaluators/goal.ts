@@ -10,8 +10,86 @@ import {
     type Goal,
     type State,
     type Evaluator,
+    type EvaluationExample,
 } from "@elizaos/core";
 import { SystemState, RelationshipState } from "../types";
+
+// Add evaluator error types
+interface GoalEvaluatorError extends Error {
+    code: string;
+    recoverable: boolean;
+    context?: unknown;
+}
+
+class GoalStateError extends Error implements GoalEvaluatorError {
+    code: string;
+    recoverable: boolean;
+    context?: unknown;
+
+    constructor(message: string, code: string, recoverable = true, context?: unknown) {
+        super(message);
+        this.name = 'GoalStateError';
+        this.code = code;
+        this.recoverable = recoverable;
+        this.context = context;
+    }
+}
+
+// Add validation utilities
+function validateGoal(goal: Goal): void {
+    if (!goal.id) {
+        throw new GoalStateError(
+            'Missing goal ID',
+            'INVALID_GOAL',
+            false,
+            { goal }
+        );
+    }
+
+    if (!goal.objectives || !Array.isArray(goal.objectives)) {
+        throw new GoalStateError(
+            'Invalid objectives format',
+            'INVALID_OBJECTIVES',
+            false,
+            { goal }
+        );
+    }
+
+    if (goal.status && !['IN_PROGRESS', 'DONE', 'FAILED'].includes(goal.status)) {
+        throw new GoalStateError(
+            'Invalid goal status',
+            'INVALID_STATUS',
+            false,
+            { goal, status: goal.status }
+        );
+    }
+
+    goal.objectives.forEach((objective, index) => {
+        if (!objective.id || !objective.description) {
+            throw new GoalStateError(
+                'Invalid objective format',
+                'INVALID_OBJECTIVE',
+                false,
+                { objective, index }
+            );
+        }
+    });
+}
+
+function validateGoalUpdates(updates: Goal[]): void {
+    if (!Array.isArray(updates)) {
+        throw new GoalStateError(
+            'Invalid updates format',
+            'INVALID_UPDATES',
+            false,
+            { updates }
+        );
+    }
+
+    updates.forEach((goal, index) => {
+        validateGoal(goal);
+    });
+}
 
 const goalsTemplate = `TASK: Update Goal
 Analyze the conversation and update the status of the goals based on the new information provided.
@@ -42,96 +120,179 @@ Response format should be:
   {
     "id": <goal uuid>, // required
     "status": "IN_PROGRESS" | "DONE" | "FAILED", // optional
-    "objectives": [ // optional
-      { "description": "Objective description", "completed": true | false },
-      { "description": "Objective description", "completed": true | false }
-    ] // NOTE: If updating objectives, include the entire objectives array including unchanged fields.
+    "objectives": [ // optional, include all objectives if updating any
+      {
+        "id": <objective uuid>,
+        "description": "objective description",
+        "completed": true | false
+      }
+    ]
   }
 ]
 \`\`\``;
 
-async function handler(
-    runtime: IAgentRuntime,
-    message: Memory,
-    state: State | undefined,
-    options: { [key: string]: unknown } = { onlyInProgress: true }
-): Promise<Goal[]> {
-    state = (await runtime.composeState(message)) as State;
-    const context = composeContext({
-        state,
-        template: runtime.character.templates?.goalsTemplate || goalsTemplate,
-    });
-
-    // Request generateText from OpenAI to analyze conversation and suggest goal updates
-    const response = await generateText({
-        runtime,
-        context,
-        modelClass: ModelClass.LARGE,
-    });
-
-    // Parse the JSON response to extract goal updates
-    const updates = parseJsonArrayFromText(response);
-
-    // get goals
-    const goalsData = await getGoals({
-        runtime,
-        roomId: message.roomId,
-        onlyInProgress: options.onlyInProgress as boolean,
-    });
-
-    // Apply the updates to the goals
-    const updatedGoals = goalsData
-        .map((goal: Goal): Goal => {
-            const update = updates?.find((u) => u.id === goal.id);
-            if (update) {
-                // Merge the update into the existing goal
-                return {
-                    ...goal,
-                    ...update,
-                    objectives: goal.objectives.map((objective) => {
-                        const updatedObjective = update.objectives?.find(uo => uo.description === objective.description);
-                        return updatedObjective ? { ...objective, ...updatedObjective } : objective;
-                    }),
-                };
-            }
-            return null; // No update for this goal
-        })
-        .filter(Boolean);
-
-    // Update goals in the database
-    for (const goal of updatedGoals) {
-        const id = goal.id;
-        // delete id from goal
-        if (goal.id) delete goal.id;
-        await runtime.databaseAdapter.updateGoal({ ...goal, id });
-    }
-
-    return updatedGoals; // Return updated goals for further processing or logging
-}
-
 export const goalEvaluator: Evaluator = {
     name: "EVALUATE_GOALS",
-    similes: ["CHECK_OBJECTIVES", "ASSESS_PROGRESS", "REVIEW_TARGETS"],
-    description: "Evaluates progress towards relationship and interaction goals",
+    similes: ["CHECK_GOALS", "ASSESS_PROGRESS", "UPDATE_GOALS"],
+    description: "Evaluates the progress of relationship goals and updates their status",
 
-    validate: async (runtime: IAgentRuntime, message: Memory) => {
-        // Check if goals are defined for current interaction
-        // Verify we're tracking progress
-        // Ensure we have sufficient context for evaluation
-        // Check if goal evaluation is needed at this point
+    validate: async (runtime: IAgentRuntime, message: Memory): Promise<boolean> => {
+        try {
+            if (!message?.roomId || !message?.userId) {
+                throw new GoalStateError(
+                    'Missing required message properties',
+                    'INVALID_MESSAGE',
+                    false
+                );
+            }
+
+            // Get active goals
+            const goals = await getGoals({
+                runtime,
+                roomId: message.roomId,
+                onlyInProgress: true
+            });
+
+            if (!goals || goals.length === 0) {
+                throw new GoalStateError(
+                    'No active goals found',
+                    'NO_GOALS',
+                    false
+                );
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error validating goal evaluator:', error);
+            return false;
+        }
     },
 
-    handler: async (runtime: IAgentRuntime, message: Memory) => {
-        // Retrieve current interaction goals
-        // Assess progress towards each goal
-        // Check relationship state transitions
-        // Update goal completion status
-        // Determine if new goals needed
-        // Generate goal progress report
-        // Update relationship progression path
-        // Trigger goal-based actions
-        // Log goal status changes
-        // Recommend next steps based on goal status
+    handler: async (runtime: IAgentRuntime, message: Memory, state?: State): Promise<Goal[]> => {
+        try {
+            // Get active goals
+            const goals = await getGoals({
+                runtime,
+                roomId: message.roomId,
+                onlyInProgress: true
+            });
+
+            if (!goals || goals.length === 0) {
+                throw new GoalStateError(
+                    'No goals available for evaluation',
+                    'NO_GOALS',
+                    false
+                );
+            }
+
+            // Get recent messages for context
+            const recentMessages = await runtime.messageManager.getMemories({
+                roomId: message.roomId,
+                count: 10
+            });
+
+            if (!recentMessages || recentMessages.length === 0) {
+                throw new GoalStateError(
+                    'No messages available for evaluation',
+                    'NO_MESSAGES',
+                    false
+                );
+            }
+
+            // Format messages for context
+            const formattedMessages = recentMessages.map(msg => ({
+                text: msg.content.text,
+                timestamp: msg.createdAt,
+                userId: msg.userId
+            }));
+
+            // Create evaluation state
+            const evaluationState: State = {
+                bio: state?.bio || '',
+                lore: state?.lore || '',
+                messageDirections: state?.messageDirections || '',
+                postDirections: state?.postDirections || '',
+                roomId: message.roomId,
+                actors: state?.actors || '',
+                recentMessagesData: recentMessages,
+                recentMessages: '',
+                goals: '',
+                lastMessage: state?.lastMessage || null,
+                lastResponse: state?.lastResponse || null
+            };
+
+            // Create evaluation context with dynamic data
+            const context = await composeContext({
+                state: {
+                    ...evaluationState,
+                    goals: JSON.stringify(goals),
+                    recentMessages: JSON.stringify(formattedMessages)
+                },
+                template: goalsTemplate
+            });
+
+            // Generate evaluation
+            const evaluationResult = await generateText({
+                runtime,
+                context,
+                modelClass: ModelClass.LARGE
+            });
+
+            if (!evaluationResult?.trim()) {
+                throw new GoalStateError(
+                    'Failed to generate evaluation',
+                    'GENERATION_FAILED',
+                    true
+                );
+            }
+
+            // Parse and validate updates
+            let updates: Goal[];
+            try {
+                updates = parseJsonArrayFromText(evaluationResult);
+            } catch (error) {
+                throw new GoalStateError(
+                    'Failed to parse evaluation result',
+                    'PARSE_ERROR',
+                    true,
+                    { evaluationResult }
+                );
+            }
+
+            // Validate updates
+            validateGoalUpdates(updates);
+
+            // Create evaluation record
+            await runtime.databaseAdapter.createMemory(
+                {
+                    userId: message.userId,
+                    agentId: runtime.agentId,
+                    roomId: message.roomId,
+                    content: {
+                        text: JSON.stringify({
+                            goals,
+                            updates,
+                            timestamp: new Date().toISOString()
+                        }),
+                        action: 'GOAL_EVALUATION'
+                    }
+                },
+                'goal_evaluations'
+            );
+
+            return updates;
+        } catch (error) {
+            if (error instanceof GoalStateError) {
+                throw error;
+            }
+
+            throw new GoalStateError(
+                'Failed to evaluate goals',
+                'EVALUATION_FAILED',
+                true,
+                { originalError: error }
+            );
+        }
     },
 
     examples: [
@@ -149,8 +310,8 @@ export const goalEvaluator: Evaluator = {
                         relationshipState: RelationshipState.ACQUAINTANCE
                     },
                 },
-            ]
-        },
-        // Add more examples...
+            ],
+            outcome: "Goal completed: Build initial rapport with user"
+        }
     ]
 };

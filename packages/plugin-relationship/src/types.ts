@@ -1,12 +1,14 @@
+import { type UUID, type Content } from "@elizaos/core";
+
 // Core Enums
-enum EmotionalState {
+export enum EmotionalState {
   HAPPY = 'happy',
   SAD = 'sad',
   ANGRY = 'angry',
   FRUSTRATED = 'frustrated'
 }
 
-enum RelationshipState {
+export enum RelationshipState {
   STRANGER = 'stranger',
   ACQUAINTANCE = 'acquaintance',
   FRIEND = 'friend',
@@ -19,7 +21,7 @@ enum RelationshipState {
   UNKNOWN = 'unknown'
 }
 
-enum SystemState {
+export enum SystemState {
   IDLE = 'idle',
   MONITORING = 'monitoring',
   EMOTION_ANALYSIS = 'emotion_analysis',
@@ -27,15 +29,33 @@ enum SystemState {
   RESPONSE_MODE = 'response_mode'
 }
 
-enum ResponseMode {
+export enum ResponseMode {
   INITIAL = 'initial',
   ONGOING = 'ongoing',
   DISENGAGEMENT = 'disengagement'
 }
 
-// Interfaces
-interface RelationshipContext {
-  userId: string;
+export type ActionType = 'MESSAGE' | 'STATE_UPDATE' | 'EMOTION_UPDATE' | 'TRANSITION';
+export type ResponseType = 'NONE' | 'ANALYZED' | 'TRANSITION' | 'AUTOMATIC' | 'MANUAL';
+
+// Database Types
+export interface DatabaseContent extends Content {
+  emotionalState?: EmotionalState;
+  action?: ActionType;
+  responseType?: ResponseType;
+}
+
+export interface DatabaseMemory {
+  userId: UUID;
+  agentId: UUID;
+  roomId: UUID;
+  content: DatabaseContent;
+  createdAt?: number;
+}
+
+// Core Interfaces
+export interface RelationshipContext {
+  userId: UUID;
   currentState: SystemState;
   emotionalState: EmotionalState;
   relationshipState: RelationshipState;
@@ -45,29 +65,56 @@ interface RelationshipContext {
   interactionHistory: InteractionHistory[];
 }
 
-interface InteractionHistory {
+export interface InteractionHistory {
   timestamp: Date;
-  action: string;
+  action: ActionType;
   emotionalState: EmotionalState;
-  responseType: string;
+  responseType: ResponseType;
 }
 
-interface UserCredibility {
+export interface UserCredibility {
   score: number;
   profileReview: ProfileReview;
   historyAnalysis: HistoryAnalysis;
+  interactionFrequency: number;
+  averageSentiment: number;
 }
 
-interface ProfileReview {
+export interface ProfileReview {
   accountAge: number;
   followerCount: number;
   followingCount: number;
   verificationStatus: boolean;
 }
 
-interface HistoryAnalysis {
+export interface HistoryAnalysis {
   pastInteractions: number;
   positiveInteractions: number;
   negativeInteractions: number;
   lastInteractionDate: Date;
+}
+
+export interface RelationshipMetrics {
+  credibilityScore: number;
+  interactionFrequency: number;
+  averageSentiment: number;
+}
+
+// Database Adapter Types
+export interface DatabaseQuery {
+  roomId: UUID;
+  agentId: UUID;
+  tableName: string;
+  count?: number;
+  start?: number;
+  end?: number;
+  unique?: boolean;
+}
+
+export interface MessageQuery {
+  roomId: UUID;
+  start?: number;
+  end?: number;
+  count?: number;
+  unique?: boolean;
 }
